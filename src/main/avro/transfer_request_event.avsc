@@ -1,0 +1,39 @@
+{
+  "type": "record",
+  "name": "TransferRequestEvent",
+  "namespace": "com.bank.transfer.adapters.inbound.kafka.avro",
+  "doc": "Evento de solicitação de transferência bancária consumido do tópico transfer-requested",
+  "fields": [
+    {
+      "name": "transferId",
+      "type": "string",
+      "doc": "Identificador único da transferência (UUID) para garantia de idempotência"
+    },
+    {
+      "name": "sourceAccountId",
+      "type": "string",
+      "doc": "Identificador da conta de origem dos fundos"
+    },
+    {
+      "name": "destinationAccountId",
+      "type": "string",
+      "doc": "Identificador da conta de destino dos fundos"
+    },
+    {
+      "name": "amount",
+      "type": "string",
+      "doc": "Valor monetário da transferência em formato string decimal (ex: '150.75')"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "default": "BRL",
+      "doc": "Código da moeda no padrão ISO-4217 (apenas BRL aceito)"
+    },
+    {
+      "name": "requestedAt",
+      "type": "string",
+      "doc": "Data e hora da solicitação em formato ISO-8601 UTC (ex: '2025-01-15T10:30:00Z')"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: bank-transfer-service
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:transfer-service}
+      auto-offset-reset: earliest
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: io.confluent.kafka.serializers.KafkaAvroDeserializer
+    properties:
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+
+app:
+  kafka:
+    topic:
+      transfer-requested: ${KAFKA_TOPIC_TRANSFER_REQUESTED:transfer-requested}
+      transfer-completed: ${KAFKA_TOPIC_TRANSFER_COMPLETED:transfer-completed}
+
+aws:
+  region: ${AWS_REGION:us-east-1}
+  accessKeyId: ${AWS_ACCESS_KEY_ID:test}
+  secretAccessKey: ${AWS_SECRET_ACCESS_KEY:test}
+  dynamodbEndpoint: ${AWS_DYNAMODB_ENDPOINT:http://localhost:4566}
+  sqsEndpoint: ${AWS_SQS_ENDPOINT:http://localhost:4566}
+  sqsDlqQueueName: ${AWS_SQS_DLQ_QUEUE:transfer-failed}
+  accountsTableName: ${AWS_DYNAMODB_TABLE_ACCOUNTS:accounts}
+  transactionsTableName: ${AWS_DYNAMODB_TABLE_TRANSACTIONS:transactions}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    com.bank.transfer: DEBUG
+    org.apache.kafka: WARN
+    software.amazon.awssdk: WARN
