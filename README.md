@@ -12,15 +12,16 @@ Microsserviço bancário desenvolvido em **Kotlin (1.9+) com Spring Boot 3.3.x**
 | Serviço Externo           |
 +---------------------------+
        |
-       | publica evento
+       | publica evento (Partition Key: sourceAccountId)
        v
-+---------------------------+       +-------------------+
-| Kafka Topic               |       | SQS DLQ           |
-| "transfer-requested"      |       | "transfer-failed" |
-+---------------------------+       +-------------------+
-       |                                     ^
-       | consome (adapters.inbound.kafka)    | falhas (adapters.outbound.sqs)
-       v                                     |
++------------------------------------+       +-------------------+
+| Kafka Topic                        |       | SQS DLQ           |
+| "transfer-requested"               |       | "transfer-failed" |
+| [Partition Key: sourceAccountId]   |       +-------------------+
++------------------------------------+                 ^
+       |                                               | falhas (adapters.outbound.sqs)
+       | consome (adapters.inbound.kafka)              |
+       v                                               |
 +---------------------------------------------------------------+
 | HEXAGONAL / CLEAN ARCHITECTURE                                |
 |                                                               |
@@ -38,7 +39,17 @@ Microsserviço bancário desenvolvido em **Kotlin (1.9+) com Spring Boot 3.3.x**
        +---> DynamoDB (adapters.outbound.dynamodb)
        |
        +---> Kafka Topic "transfer-completed" (adapters.outbound.kafka)
+             [Partition Key: transferId]
 ```
+
+### 🔑 Chaves de Partição no Kafka (Partition Keys)
+- **Tópico `transfer-requested` (Entrada):**
+  - **Partition Key:** `sourceAccountId`
+  - **Finalidade:** Garante a ordenação estrita FIFO (*First-In, First-Out*) no nível de partição para todas as transações da mesma conta de origem. Isso assegura que requisições concorrentes da mesma conta sejam processadas sequencialmente pela mesma thread consumidora, eliminando condições de corrida (*race conditions*) e inconsistências de saldo (*lost updates*).
+- **Tópico `transfer-completed` (Saída):**
+  - **Partition Key:** `transferId`
+  - **Finalidade:** Permite correlação direta com a requisição original e distribui uniformemente os eventos de conclusão entre as partições para os serviços downstream.
+
 
 ### 🧱 Estrutura em 2 Pacotes (Domain & Adapters)
 1. **`domain` (Autocontido com Regras & Portas):**
@@ -57,12 +68,12 @@ Microsserviço bancário desenvolvido em **Kotlin (1.9+) com Spring Boot 3.3.x**
 ### Principais Características Técnicas
 1. **Atomicidade e Idempotência:**
    - Execução através de `TransactWriteItems` do DynamoDB: débito na conta de origem, crédito na conta de destino e inserção na tabela `transactions` com condição `attribute_not_exists(transferId)`. Tudo ocorre em uma única operação ACID (all-or-nothing).
-2. **Separação de Falhas e Resiliência (Desafio Extra 1 e 2):**
+2. **Separação de Falhas e Resiliência:**
    - **Falhas de Negócio** (saldo insuficiente, conta inexistente ou inativa, moeda inválida): enviadas imediatamente para a DLQ SQS `transfer-failed` e salvas como `FAILED` na tabela `transactions`, sem retries desnecessários.
    - **Erros Transientes** (timeouts, throttling): submetidos a retry automático com **backoff exponencial** (até 3 tentativas) antes de serem encaminhados para a DLQ.
 3. **Garantia de Ordenação por Cliente (FIFO) e Particionamento por `sourceAccountId`:**
-   - **Ordenação Estrita por Conta:** O Apache Kafka garante a ordem de entrega das mensagens estritamente **no nível de partição**. Ao utilizar o `sourceAccountId` como a chave de partição (`message key`), todas as transações de uma mesma conta são roteadas deterministicamente para a **mesma partição** (via hash Murmur2 padrão do Kafka).
-   - **Eliminação de Condições de Corrida (*Race Conditions*):** Cada partição é consumida sequencialmente por apenas uma thread do grupo de consumidores (`concurrency: 3`). Isso impede que duas transferências da mesma conta de origem sejam processadas em paralelo por threads diferentes, eliminando *lost updates* e garantindo que o saldo seja avaliado e debitado na ordem exata de chegada.
+   - **Ordenação Estrita por Conta:** O Apache Kafka garante a ordem de entrega das mensagens estritamente **no nível de partição**. Ao utilizar o `sourceAccountId` como a chave de partição (`message key`), todas as transações de uma mesma conta são roteadas para a **mesma partição**.
+   - **Eliminação de Condições de Corrida (*Race Conditions*):** Cada partição é consumida sequencialmente por apenas uma thread do grupo de consumidores. Isso impede que duas transferências da mesma conta de origem sejam processadas em paralelo por threads diferentes, eliminando *lost updates* e garantindo que o saldo seja avaliado e debitado na ordem exata de chegada.
    - **Paralelismo Seguro e Balanceamento:** O cluster está configurado com 3 partições. Mensagens de contas distintas (`acc-123`, `acc-456`, `acc-789`) são distribuídas entre partições distintas, permitindo alto throughput com concorrência segura entre clientes.
 4. **Logs Estruturados e Observabilidade:**
    - Logs em formato JSON (Logstash Logback Encoder) com `transferId`, `sourceAccountId` e `partitionKey` via MDC (Mapped Diagnostic Context).

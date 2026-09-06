@@ -22,7 +22,9 @@ class KafkaConfig(
     @Value("\${spring.kafka.bootstrap-servers:localhost:9092}")
     private val bootstrapServers: String,
     @Value("\${spring.kafka.properties.schema.registry.url:http://localhost:8081}")
-    private val schemaRegistryUrl: String
+    private val schemaRegistryUrl: String,
+    @Value("\${spring.kafka.consumer.group-id:transfer-service}")
+    private val groupId: String
 ) {
 
     @Bean
@@ -47,7 +49,7 @@ class KafkaConfig(
     fun consumerFactory(): ConsumerFactory<String, Any> {
         val configProps = mapOf(
             ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG to bootstrapServers,
-            ConsumerConfig.GROUP_ID_CONFIG to "transfer-service",
+            ConsumerConfig.GROUP_ID_CONFIG to groupId,
             ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG to ErrorHandlingDeserializer::class.java,
             ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG to ErrorHandlingDeserializer::class.java,
             ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS to StringDeserializer::class.java.name,

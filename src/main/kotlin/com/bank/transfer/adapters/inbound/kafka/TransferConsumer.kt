@@ -19,9 +19,14 @@ class TransferConsumer(
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
+    companion object {
+        const val TOPIC_TRANSFER_REQUESTED = "\${app.kafka.topic.transfer-requested:transfer-requested}"
+        const val CONSUMER_GROUP_ID = "\${spring.kafka.consumer.group-id:transfer-service}"
+    }
+
     @KafkaListener(
-        topics = ["\${app.kafka.topic.transfer-requested:transfer-requested}"],
-        groupId = "\${spring.kafka.consumer.group-id:transfer-service}"
+        topics = [TOPIC_TRANSFER_REQUESTED],
+        groupId = CONSUMER_GROUP_ID
     )
     fun handle(event: TransferRequestEvent) {
         var transferId: String? = null
@@ -35,7 +40,7 @@ class TransferConsumer(
             MDC.put("sourceAccountId", transfer.sourceAccountId)
             MDC.put("destinationAccountId", transfer.destinationAccountId)
 
-            logger.info("Mensagem Avro recebida do tópico transfer-requested: transferId=${transfer.transferId}")
+            logger.info("Mensagem Avro recebida do tópico $TOPIC_TRANSFER_REQUESTED: transferId=${transfer.transferId}")
 
             processTransferUseCase.processTransfer(transfer)
 

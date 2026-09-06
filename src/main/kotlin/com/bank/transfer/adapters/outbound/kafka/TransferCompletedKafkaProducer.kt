@@ -4,16 +4,18 @@ import com.bank.transfer.domain.event.TransferCompletedEvent
 import com.bank.transfer.domain.port.TransferCompletedProducerPort
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.kafka.core.KafkaTemplate
 import org.springframework.stereotype.Component
 
 @Component
 class TransferCompletedKafkaProducer(
     private val kafkaTemplate: KafkaTemplate<String, String>,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    @Value("\${app.kafka.topic.transfer-completed:transfer-completed}")
+    private val topicName: String = "transfer-completed"
 ) : TransferCompletedProducerPort {
     private val logger = LoggerFactory.getLogger(this::class.java)
-    private val topicName = "transfer-completed"
 
     override fun publish(event: TransferCompletedEvent) {
         val payload = objectMapper.writeValueAsString(event)
