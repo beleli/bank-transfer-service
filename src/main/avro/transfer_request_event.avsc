@@ -21,8 +21,8 @@
     },
     {
       "name": "amount",
-      "type": "string",
-      "doc": "Valor monetário da transferência em formato string decimal (ex: '150.75')"
+      "type": "double",
+      "doc": "Valor monetário da transferência como número decimal com ponto (ex: 150.75)"
     },
     {
       "name": "currency",

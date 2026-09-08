@@ -136,7 +136,7 @@ A aplicação iniciará na porta `8080`.
 >    - `--property parse.key=true`: Habilita leitura da chave na entrada padrão.
 >    - `--property key.separator=:`: Define `:` como o separador entre a chave de partição e o payload Avro.
 >    - `--property key.serializer=org.apache.kafka.common.serialization.StringSerializer`: Serializa a chave como String (compatível com o `StringDeserializer` da aplicação).
-> 3. **Tipagem de Valores:** O campo `amount` deve ser informado como string entre aspas (ex: `"150.75"`). Todos os blocos abaixo estão prontos para execução com o botão **Play (▶️)** da IDE no Windows.
+> 3. **Tipagem de Valores:** O campo `amount` deve ser informado como número com ponto decimal (ex: `150.75`). Todos os blocos abaixo estão prontos para execução com o botão **Play (▶️)** da IDE no Windows.
 
 ---
 
@@ -144,7 +144,7 @@ A aplicação iniciará na porta `8080`.
 Envie uma transferência de R$ 150,75 da conta `acc-123` para a conta `acc-456` (chave de partição `acc-123`):
 
 ```bash
-echo 'acc-123:{"transferId":"550e8400-e29b-41d4-a716-446655440000","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":"150.75","currency":"BRL","requestedAt":"2025-01-15T10:30:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
+echo 'acc-123:{"transferId":"550e8400-e29b-41d4-a716-446655440000","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":150.75,"currency":"BRL","requestedAt":"2025-01-15T10:30:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
 ```
 
 **Resultado Esperado:**
@@ -165,7 +165,7 @@ docker exec -i bank-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-s
 Clique no **Play (▶️)** do bloco abaixo para reenviar o mesmo payload e verificar que o sistema rejeita duplicatas sem debitar novamente:
 
 ```bash
-echo 'acc-123:{"transferId":"550e8400-e29b-41d4-a716-446655440000","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":"150.75","currency":"BRL","requestedAt":"2025-01-15T10:30:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
+echo 'acc-123:{"transferId":"550e8400-e29b-41d4-a716-446655440000","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":150.75,"currency":"BRL","requestedAt":"2025-01-15T10:30:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
 ```
 
 **Resultado Esperado:**
@@ -179,7 +179,7 @@ echo 'acc-123:{"transferId":"550e8400-e29b-41d4-a716-446655440000","sourceAccoun
 Tentativa de transferir R$ 99.000,00 da conta `acc-123` (que possui saldo de R$ 4.849,25):
 
 ```bash
-echo 'acc-123:{"transferId":"a1b2c3d4-e5f6-7890-abcd-111122223333","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":"99000.00","currency":"BRL","requestedAt":"2026-09-04T10:35:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
+echo 'acc-123:{"transferId":"a1b2c3d4-e5f6-7890-abcd-111122223333","sourceAccountId":"acc-123","destinationAccountId":"acc-456","amount":99000.00,"currency":"BRL","requestedAt":"2026-09-04T10:35:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
 ```
 
 **Resultado Esperado:**
@@ -198,7 +198,7 @@ docker exec bank-localstack awslocal sqs receive-message --queue-url http://loca
 Tentativa de transferir para a conta `acc-000` (encerrada):
 
 ```bash
-echo 'acc-123:{"transferId":"c3d4e5f6-a7b8-9012-cdef-444455556666","sourceAccountId":"acc-123","destinationAccountId":"acc-000","amount":"100.00","currency":"BRL","requestedAt":"2026-09-04T10:40:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
+echo 'acc-123:{"transferId":"c3d4e5f6-a7b8-9012-cdef-444455556666","sourceAccountId":"acc-123","destinationAccountId":"acc-000","amount":100.00,"currency":"BRL","requestedAt":"2026-09-04T10:40:00Z"}' | docker exec -i bank-schema-registry kafka-avro-console-producer --broker-list kafka:29092 --topic transfer-requested --property schema.registry.url=http://localhost:8081 --property value.schema.id=1 --property parse.key=true --property key.separator=: --property key.serializer=org.apache.kafka.common.serialization.StringSerializer
 ```
 
 **Resultado Esperado:**
