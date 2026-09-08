@@ -11,14 +11,14 @@
 | Etapa | Atividades Realizadas | Tempo |
 | :--- | :--- | :---: |
 | **1. Análise e Arquitetura** | Levantamento de requisitos, desenho da arquitetura hexagonal (Portas e Adaptadores com Domínio puro), modelagem do fluxo Kafka/SQS e garantia de idempotência. | 2.0 h |
-| **2. Setup de Infraestrutura Local** | Configuração do `docker-compose.yml` com Apache Kafka KRaft (sem Zookeeper), Confluent Schema Registry (`schema-registry-init`), LocalStack (DynamoDB + SQS) e volumes centralizados em `./docker/`. | 3.0 h |
+| **2. Setup de Infraestrutura Local** | Configuração do `docker-compose.yml` com Apache Kafka KRaft (sem Zookeeper), Confluent Schema Registry (`schema-registry-init`), LocalStack (DynamoDB + SQS) e volumes centralizados em `./docker/`. | 2.0 h |
 | **3. Modelagem de Domínio e Contratos Avro** | Implementação das entidades de domínio puro (`Account`, `Transaction`, `TransferRequest`), portas de negócio, schema Avro canônico (`transfer_request_event.avsc`) e rotina Gradle de compilação de código tipado. | 2.0 h |
 | **4. Persistência e Transacionalidade (DynamoDB)** | Desenvolvimento dos adaptadores de persistência com `TransactWriteItems` (débito, crédito e registro atômicos em operação ACID única) e extension functions de mapeamento. | 3.5 h |
 | **5. Mensageria, Schema Registry e Resiliência** | Consumidor Kafka com `TransferRequestEvent`, configuração de `ErrorHandlingDeserializer` contra poison pills, produtores Kafka/SQS e segregação de erros transientes (Retry) vs. negócio (DLQ imediata). | 3.5 h |
 | **6. Observabilidade e Logs** | Configuração de logs estruturados em JSON via Logstash Logback Encoder com MDC (`transferId`), métricas de latência e contadores Micrometer expostos para Prometheus. | 2.0 h |
-| **7. Testes Automatizados** | Implementação de 19 testes unitários com Mockk e JUnit 5 cobrindo regras de negócio, saldo insuficiente, concorrência, idempotência, desserialização Avro e DLQ. | 3.5 h |
-| **8. Code Review Legado e Documentação** | Análise crítica de segurança e resiliência do código `legacy-consumer.kt`, elaboração do code review e guia prático com execução direta no `README.md`. | 1.5 h |
-| **Total Geral** | | **21.0 h** |
+| **7. Testes Automatizados** | Implementação de 19 testes unitários com Mockk e JUnit 5 cobrindo regras de negócio, saldo insuficiente, concorrência, idempotência, desserialização Avro e DLQ. | 2.5 h |
+| **8. Code Review Legado e Documentação** | Análise crítica de segurança e resiliência do código `legacy-consumer.kt`, elaboração do code review e guia prático com execução direta no `README.md`. | 0.5 h |
+| **Total Geral** | | **18.0 h** |
 
 ---
 
@@ -36,11 +36,10 @@
    - Validação e evolução de schemas no tópico Kafka garantida pelo Confluent Schema Registry.
    - Desserialização fortemente tipada em tempo de compilação, combinada com `ErrorHandlingDeserializer` para proteção contra *poison pills*.
 
-4. **Separação Rigorosa de Falhas:**
+4. **Separação de Falhas:**
    - **Falhas de Negócio:** Rejeição imediata sem retries (ex: saldo insuficiente, conta inativa), persistência com status `FAILED` e despacho para a fila SQS DLQ `transfer-failed`.
    - **Falhas Transientes:** Retry com backoff exponencial antes de encaminhar para a DLQ, assegurando tolerância a falhas momentâneas.
 
 5. **Garantia de Ordenação por Cliente (FIFO) via Chave de Partição (`sourceAccountId`):**
-   - Ao definir `sourceAccountId` como a chave de partição no Kafka (`murmur2(key) % partitions`), todas as solicitações da mesma conta convergem deterministicamente para a mesma partição.
-   - Combinado com o consumo sequencial por partição (`concurrency: 3`), assegura linearidade e ordenação temporal estrita das transações de cada cliente, eliminando race conditions sobre o saldo bancário enquanto viabiliza paralelismo horizontal entre clientes distintos.
+   - Ao definir `sourceAccountId` como a chave de partição no Kafka, todas as solicitações da mesma conta convergem deterministicamente para a mesma partição.
 
