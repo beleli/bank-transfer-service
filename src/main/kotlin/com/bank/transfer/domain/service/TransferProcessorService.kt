@@ -15,6 +15,12 @@ import org.springframework.retry.annotation.Retryable
 import org.springframework.stereotype.Service
 import java.time.Instant
 
+// Constantes privadas no topo do arquivo (sem overhead de Companion Object)
+private const val DEFAULT_REJECTION_REASON = "Regra de negócio violada"
+private const val METRIC_KAFKA_RETRY_EXHAUSTED = "kafka_publish_retry_exhausted"
+private const val METRIC_DLQ_RETRY_EXHAUSTED = "dlq_publish_retry_exhausted"
+private const val METRIC_TRANSIENT_RETRY_EXHAUSTED = "transient_retry_exhausted"
+
 @Service
 class TransferProcessorService(
     private val accountRepository: AccountRepositoryPort,
@@ -26,13 +32,6 @@ class TransferProcessorService(
 ) : ProcessTransferUseCase {
 
     private val logger = LoggerFactory.getLogger(this::class.java)
-
-    companion object {
-        private const val DEFAULT_REJECTION_REASON = "Regra de negócio violada"
-        private const val METRIC_KAFKA_RETRY_EXHAUSTED = "kafka_publish_retry_exhausted"
-        private const val METRIC_DLQ_RETRY_EXHAUSTED = "dlq_publish_retry_exhausted"
-        private const val METRIC_TRANSIENT_RETRY_EXHAUSTED = "transient_retry_exhausted"
-    }
 
     /**
      * Processa a transferência bancária com retry exponencial para erros transientes
