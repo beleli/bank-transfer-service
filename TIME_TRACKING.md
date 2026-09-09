@@ -2,7 +2,7 @@
 
 **Candidato / Desenvolvedor:** Carlos Alberto Beleli Junior
 **Projeto:** Microsserviço de Processamento de Transferências Bancárias  
-**Tempo Total de Investimento:** 21.0 horas
+**Tempo Total de Investimento:** 18.0 horas
 
 ---
 
