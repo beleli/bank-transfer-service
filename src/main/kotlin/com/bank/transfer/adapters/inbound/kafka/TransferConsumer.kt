@@ -45,18 +45,32 @@ class TransferConsumer(
             processTransferUseCase.processTransfer(transfer)
 
         } catch (e: Exception) {
-            logger.error("Erro inesperado ao processar evento Avro do Kafka: ${e.message}", e)
+            logger.error("Erro inesperado ao processar evento Avro do Kafka transferId=$transferId: ${e.message}", e)
             val fallbackId = transferId ?: UUID.randomUUID().toString()
-            dlqProducer.sendToDlq(
-                TransferFailedEvent(
-                    transferId = fallbackId,
-                    sourceAccountId = event.sourceAccountId ?: "UNKNOWN",
-                    destinationAccountId = event.destinationAccountId ?: "UNKNOWN",
-                    amount = BigDecimal.ZERO,
-                    currency = "BRL",
-                    reason = "Processing error on Avro event: ${e.message}"
+            val parsedAmount = try {
+                BigDecimal.valueOf(event.amount)
+            } catch (_: Exception) {
+                BigDecimal.ZERO
+            }
+
+            try {
+                dlqProducer.sendToDlq(
+                    TransferFailedEvent(
+                        transferId = fallbackId,
+                        sourceAccountId = event.sourceAccountId ?: "UNKNOWN",
+                        destinationAccountId = event.destinationAccountId ?: "UNKNOWN",
+                        amount = parsedAmount,
+                        currency = event.currency ?: "BRL",
+                        reason = "Processing error on Avro event: ${e.message}"
+                    )
                 )
-            )
+            } catch (dlqEx: Exception) {
+                logger.error("Falha ao enviar evento para DLQ SQS transferId=$fallbackId: ${dlqEx.message}", dlqEx)
+            }
+
+            // Propaga a exceção para que o Spring Kafka não comite o offset indevidamente
+            // e acione a política de retries do container (DefaultErrorHandler)
+            throw e
         } finally {
             MDC.clear()
         }

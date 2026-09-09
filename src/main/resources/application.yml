@@ -37,6 +37,7 @@ aws:
   sqsDlqQueueName: ${AWS_SQS_DLQ_QUEUE:transfer-failed}
   accountsTableName: ${AWS_DYNAMODB_TABLE_ACCOUNTS:accounts}
   transactionsTableName: ${AWS_DYNAMODB_TABLE_TRANSACTIONS:transactions}
+  shedlockTableName: ${AWS_DYNAMODB_TABLE_SHEDLOCK:shedlock}
 
 management:
   endpoints:

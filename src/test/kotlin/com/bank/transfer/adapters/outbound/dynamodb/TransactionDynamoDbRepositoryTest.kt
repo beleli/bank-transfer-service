@@ -267,5 +267,46 @@ class TransactionDynamoDbRepositoryTest {
             repository.markAsPublished(transferId)
         }
     }
+
+    @Test
+    fun `findUnpublished deve executar scan com filtro de published false e status COMPLETED`() {
+        val item = mapOf(
+            "transferId" to AttributeValue.builder().s("tx-unpub").build(),
+            "sourceAccountId" to AttributeValue.builder().s("acc-1").build(),
+            "destinationAccountId" to AttributeValue.builder().s("acc-2").build(),
+            "amount" to AttributeValue.builder().n("100.00").build(),
+            "currency" to AttributeValue.builder().s("BRL").build(),
+            "status" to AttributeValue.builder().s("COMPLETED").build(),
+            "createdAt" to AttributeValue.builder().s(Instant.now().toString()).build(),
+            "published" to AttributeValue.builder().bool(false).build()
+        )
+        val scanResponse = ScanResponse.builder().items(listOf(item)).build()
+        every { dynamoDbClient.scan(any<ScanRequest>()) } returns scanResponse
+
+        val result = repository.findUnpublished(limit = 10)
+
+        assertEquals(1, result.size)
+        assertEquals("tx-unpub", result[0].transferId)
+        assertFalse(result[0].published)
+
+        verify(exactly = 1) {
+            dynamoDbClient.scan(match<ScanRequest> {
+                it.tableName() == "transactions" &&
+                it.limit() == 10 &&
+                it.filterExpression().contains("published = :published") &&
+                it.expressionAttributeValues()[":published"]?.bool() == false
+            })
+        }
+    }
+
+    @Test
+    fun `findUnpublished deve lancar TransientException quando DynamoDbClient falhar com erro transiente`() {
+        val dynamoEx = DynamoDbException.builder().statusCode(503).message("Unavailable").build()
+        every { dynamoDbClient.scan(any<ScanRequest>()) } throws dynamoEx
+
+        assertThrows<TransientException> {
+            repository.findUnpublished(limit = 10)
+        }
+    }
 }
 

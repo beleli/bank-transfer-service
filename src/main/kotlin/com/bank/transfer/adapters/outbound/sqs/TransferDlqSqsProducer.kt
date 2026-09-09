@@ -26,9 +26,16 @@ class TransferDlqSqsProducer(
             val queueUrl = getQueueUrl(awsProperties.sqsDlqQueueName)
             val messageBody = objectMapper.writeValueAsString(event)
 
+            val messageAttributes = mapOf(
+                "transferId" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.transferId).build(),
+                "reason" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.reason.take(256)).build(),
+                "timestamp" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.failedAt.toString()).build()
+            )
+
             val sendMsgRequest = SendMessageRequest.builder()
                 .queueUrl(queueUrl)
                 .messageBody(messageBody)
+                .messageAttributes(messageAttributes)
                 .build()
 
             sqsClient.sendMessage(sendMsgRequest)

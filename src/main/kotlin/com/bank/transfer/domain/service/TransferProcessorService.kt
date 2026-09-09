@@ -143,8 +143,7 @@ class TransferProcessorService(
      */
     private fun handleBusinessError(request: TransferRequest, exception: BusinessException, duration: Long) {
         if (exception is BusinessException.DuplicateTransferException) {
-            logger.warn("Transferência transferId=${request.transferId} detectada como duplicata 985466" +
-                    " no DynamoDB (idempotência). Ignorando reprocessamento.")
+            logger.warn("Transferência transferId=${request.transferId} detectada como duplicata no DynamoDB (idempotência). Ignorando reprocessamento.")
             return
         }
 

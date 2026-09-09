@@ -65,7 +65,9 @@ class KafkaConfig(
     fun kafkaListenerContainerFactory(): ConcurrentKafkaListenerContainerFactory<String, Any> {
         val factory = ConcurrentKafkaListenerContainerFactory<String, Any>()
         factory.consumerFactory = consumerFactory()
-        factory.setCommonErrorHandler(DefaultErrorHandler(FixedBackOff(1000L, 2)))
+        // Configuração de retries no container com backoff fixo de 1s e até 3 tentativas
+        val errorHandler = DefaultErrorHandler(FixedBackOff(1000L, 3L))
+        factory.setCommonErrorHandler(errorHandler)
         return factory
     }
 }

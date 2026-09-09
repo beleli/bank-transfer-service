@@ -59,6 +59,10 @@ dependencies {
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("net.logstash.logback:logstash-logback-encoder:7.4")
 
+    // ShedLock (Distributed Locks)
+    implementation("net.javacrumbs.shedlock:shedlock-spring:5.16.0")
+    implementation("net.javacrumbs.shedlock:shedlock-provider-dynamodb2:5.16.0")
+
     // Testing
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.kafka:spring-kafka-test")
@@ -67,6 +71,7 @@ dependencies {
 }
 
 tasks.withType<KotlinCompile> {
+    dependsOn("generateAvroJava")
     kotlinOptions {
         freeCompilerArgs += "-Xjsr305=strict"
         jvmTarget = "17"

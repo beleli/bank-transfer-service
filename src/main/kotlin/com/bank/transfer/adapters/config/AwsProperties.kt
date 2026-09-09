@@ -14,4 +14,5 @@ class AwsProperties {
     var sqsDlqQueueName: String = "transfer-failed"
     var accountsTableName: String = "accounts"
     var transactionsTableName: String = "transactions"
+    var shedlockTableName: String = "shedlock"
 }

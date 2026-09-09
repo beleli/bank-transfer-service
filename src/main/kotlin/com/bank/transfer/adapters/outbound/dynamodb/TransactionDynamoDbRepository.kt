@@ -98,6 +98,33 @@ class TransactionDynamoDbRepository(
         }
     }
 
+    override fun findUnpublished(limit: Int): List<Transaction> {
+        try {
+            val request = ScanRequest.builder()
+                .tableName(awsProperties.transactionsTableName)
+                .filterExpression("published = :published AND #status = :status")
+                .expressionAttributeNames(mapOf("#status" to "status"))
+                .expressionAttributeValues(
+                    mapOf(
+                        ":published" to AttributeValue.builder().bool(false).build(),
+                        ":status" to AttributeValue.builder().s(TransactionStatus.COMPLETED.name).build()
+                    )
+                )
+                .limit(limit)
+                .build()
+
+            val response = dynamoDbClient.scan(request)
+            return response.items().map { it.toDomainTransactionRecord() }
+        } catch (e: SdkClientException) {
+            throw TransientException("DynamoDB client error querying unpublished transactions: ${e.message}", e)
+        } catch (e: DynamoDbException) {
+            if (isTransientError(e)) {
+                throw TransientException("DynamoDB transient error querying unpublished transactions: ${e.message}", e)
+            }
+            throw e
+        }
+    }
+
     private fun isTransientError(e: DynamoDbException): Boolean {
         val statusCode = e.statusCode()
         return statusCode == 429 || statusCode >= 500 ||
