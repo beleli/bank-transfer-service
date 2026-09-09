@@ -374,4 +374,53 @@ class TransferProcessorServiceTest {
         // Deve registrar métrica de retry esgotado
         verify(exactly = 1) { metricsService.recordFailure("kafka_publish_retry_exhausted", 0) }
     }
+
+    @Test
+    fun `handleBusinessError nao deve enviar para DLQ quando save lancar DuplicateTransferException por concorrencia`() {
+        val request = TransferRequest(
+            transferId = "tx-concorrente-failed",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("100.00"),
+            currency = "BRL"
+        )
+
+        val sourceAccount = Account("acc-123", BigDecimal("50.00"), "BRL", AccountStatus.ACTIVE, "João Silva")
+        val destAccount = Account("acc-456", BigDecimal("1200.50"), "BRL", AccountStatus.ACTIVE, "Maria Santos")
+
+        every { transactionRepository.findById(request.transferId) } returns null
+        every { accountRepository.findById("acc-123") } returns sourceAccount
+        every { accountRepository.findById("acc-456") } returns destAccount
+        every { validationService.validate(any(), any(), any()) } throws BusinessException.InsufficientBalanceException("acc-123", "50.00", "100.00")
+        every { transactionRepository.save(any()) } throws BusinessException.DuplicateTransferException(request.transferId)
+
+        processorService.processTransfer(request)
+
+        // Deve tentar salvar no banco
+        verify(exactly = 1) { transactionRepository.save(any()) }
+
+        // NÃO deve enviar para DLQ pois outra thread concorrente já registrou
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+        verify(exactly = 0) { transactionRepository.markAsPublished(any()) }
+    }
+
+    @Test
+    fun `recoverFromTransientError nao deve enviar para DLQ quando save lancar DuplicateTransferException`() {
+        val request = TransferRequest(
+            transferId = "tx-concorrente-recover",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL"
+        )
+
+        every { transactionRepository.findById("tx-concorrente-recover") } returns null
+        every { transactionRepository.save(any()) } throws BusinessException.DuplicateTransferException(request.transferId)
+
+        val transientEx = com.bank.transfer.domain.exception.TransientException("Erro de rede")
+        processorService.recoverFromTransientError(transientEx, request)
+
+        verify(exactly = 1) { transactionRepository.save(any()) }
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+    }
 }

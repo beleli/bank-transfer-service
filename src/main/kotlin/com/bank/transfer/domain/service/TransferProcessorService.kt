@@ -165,6 +165,9 @@ class TransferProcessorService(
         )
         try {
             transactionRepository.save(failedRecord)
+        } catch (_: BusinessException.DuplicateTransferException) {
+            logger.warn("Transferência transferId=${request.transferId} já registrada no DynamoDB por requisição concorrente. Ignorando envio duplicado para DLQ.")
+            return
         } catch (ex: Exception) {
             logger.error("Erro ao persistir status FAILED para transferId=${request.transferId}: ${ex.message}", ex)
         }
@@ -219,6 +222,9 @@ class TransferProcessorService(
         )
         try {
             transactionRepository.save(failedRecord)
+        } catch (_: BusinessException.DuplicateTransferException) {
+            logger.warn("Transferência transferId=${request.transferId} já registrada no DynamoDB no recover. Ignorando envio para DLQ.")
+            return
         } catch (ex: Exception) {
             logger.error("Erro ao persistir status FAILED no recover para transferId=${request.transferId}: ${ex.message}", ex)
         }

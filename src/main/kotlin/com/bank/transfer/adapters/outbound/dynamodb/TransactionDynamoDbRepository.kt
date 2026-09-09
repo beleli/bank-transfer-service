@@ -3,6 +3,7 @@ package com.bank.transfer.adapters.outbound.dynamodb
 import com.bank.transfer.adapters.config.AwsProperties
 import com.bank.transfer.adapters.outbound.dynamodb.mapper.toDomainTransactionRecord
 import com.bank.transfer.adapters.outbound.dynamodb.mapper.toItem
+import com.bank.transfer.domain.exception.BusinessException
 import com.bank.transfer.domain.exception.TransientException
 import com.bank.transfer.domain.model.Transaction
 import com.bank.transfer.domain.model.TransactionStatus
@@ -49,24 +50,17 @@ class TransactionDynamoDbRepository(
         try {
             val item = record.toItem()
 
-            val requestBuilder = PutItemRequest.builder()
+            val request = PutItemRequest.builder()
                 .tableName(awsProperties.transactionsTableName)
                 .item(item)
+                .conditionExpression("attribute_not_exists(transferId)")
+                .build()
 
-            // Se for status FAILED, previne sobrescrever uma transação já concluída com sucesso (COMPLETED)
-            if (record.status == TransactionStatus.FAILED) {
-                requestBuilder
-                    .conditionExpression("attribute_not_exists(transferId) OR #status <> :completed")
-                    .expressionAttributeNames(mapOf("#status" to "status"))
-                    .expressionAttributeValues(
-                        mapOf(":completed" to AttributeValue.builder().s(TransactionStatus.COMPLETED.name).build())
-                    )
-            }
-
-            dynamoDbClient.putItem(requestBuilder.build())
+            dynamoDbClient.putItem(request)
             logger.info("Registro de transação salvo para transferId=${record.transferId} status=${record.status}")
         } catch (_: ConditionalCheckFailedException) {
-            logger.warn("Transação transferId=${record.transferId} já se encontra COMPLETED. Sobrescrita para FAILED evitada.")
+            logger.warn("Transação transferId=${record.transferId} já existe no DynamoDB. Sobrescrita evitada (idempotência).")
+            throw BusinessException.DuplicateTransferException(record.transferId)
         } catch (e: SdkClientException) {
             throw TransientException("DynamoDB client error saving transaction ${record.transferId}: ${e.message}", e)
         } catch (e: DynamoDbException) {

@@ -1,6 +1,7 @@
 package com.bank.transfer.adapters.outbound.dynamodb
 
 import com.bank.transfer.adapters.config.AwsProperties
+import com.bank.transfer.domain.exception.BusinessException
 import com.bank.transfer.domain.exception.TransientException
 import com.bank.transfer.domain.model.Transaction
 import com.bank.transfer.domain.model.TransactionStatus
@@ -113,7 +114,7 @@ class TransactionDynamoDbRepositoryTest {
     }
 
     @Test
-    fun `save deve persistir transacao com status COMPLETED sem condicao restritiva`() {
+    fun `save deve persistir transacao com condicao attribute_not_exists para garantir idempotencia`() {
         val tx = Transaction(
             transferId = "tx-comp",
             sourceAccountId = "acc-1",
@@ -132,13 +133,13 @@ class TransactionDynamoDbRepositoryTest {
             dynamoDbClient.putItem(match<PutItemRequest> {
                 it.tableName() == "transactions" &&
                         it.item()["transferId"]?.s() == "tx-comp" &&
-                        it.conditionExpression() == null
+                        it.conditionExpression() == "attribute_not_exists(transferId)"
             })
         }
     }
 
     @Test
-    fun `save deve persistir transacao com status FAILED com condicao para nao sobrescrever COMPLETED`() {
+    fun `save deve persistir transacao com status FAILED com condicao attribute_not_exists para idempotencia`() {
         val tx = Transaction(
             transferId = "tx-fail",
             sourceAccountId = "acc-1",
@@ -157,17 +158,15 @@ class TransactionDynamoDbRepositoryTest {
             dynamoDbClient.putItem(match<PutItemRequest> {
                 it.tableName() == "transactions" &&
                         it.item()["transferId"]?.s() == "tx-fail" &&
-                        it.conditionExpression() == "attribute_not_exists(transferId) OR #status <> :completed" &&
-                        it.expressionAttributeNames()["#status"] == "status" &&
-                        it.expressionAttributeValues()[":completed"]?.s() == "COMPLETED"
+                        it.conditionExpression() == "attribute_not_exists(transferId)"
             })
         }
     }
 
     @Test
-    fun `save deve ignorar silenciosamente quando ConditionalCheckFailedException ocorrer para status FAILED`() {
+    fun `save deve lancar DuplicateTransferException quando ConditionalCheckFailedException ocorrer`() {
         val tx = Transaction(
-            transferId = "tx-already-completed",
+            transferId = "tx-already-exists",
             sourceAccountId = "acc-1",
             destinationAccountId = "acc-2",
             amount = BigDecimal("100.00"),
@@ -179,8 +178,7 @@ class TransactionDynamoDbRepositoryTest {
         val condEx = ConditionalCheckFailedException.builder().message("Condition check failed").build()
         every { dynamoDbClient.putItem(any<PutItemRequest>()) } throws condEx
 
-        // Não deve propagar exceção
-        assertDoesNotThrow {
+        assertThrows<BusinessException.DuplicateTransferException> {
             repository.save(tx)
         }
     }
