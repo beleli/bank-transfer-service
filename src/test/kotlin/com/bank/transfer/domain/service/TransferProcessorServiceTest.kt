@@ -67,6 +67,11 @@ class TransferProcessorServiceTest {
             completedProducer.publish(match { it.transferId == request.transferId })
         }
 
+        // Verifica que foi marcada como publicada
+        verify(exactly = 1) {
+            transactionRepository.markAsPublished(request.transferId)
+        }
+
         // Não deve enviar para DLQ
         verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
 
@@ -75,7 +80,7 @@ class TransferProcessorServiceTest {
     }
 
     @Test
-    fun `deve garantir idempotencia e nao reprocessar quando transferId ja existir`() {
+    fun `deve garantir idempotencia e nao reprocessar quando transferId ja existir com published true`() {
         val request = TransferRequest(
             transferId = "tx-duplicada",
             sourceAccountId = "acc-123",
@@ -91,7 +96,8 @@ class TransferProcessorServiceTest {
             amount = BigDecimal("50.00"),
             currency = "BRL",
             status = TransactionStatus.COMPLETED,
-            createdAt = Instant.now()
+            createdAt = Instant.now(),
+            published = true
         )
 
         every { transactionRepository.findById("tx-duplicada") } returns existingTx
@@ -101,6 +107,44 @@ class TransferProcessorServiceTest {
         // Garante que NENHUMA operação de débito/crédito ou publicação ocorra
         verify(exactly = 0) { accountRepository.executeAtomicTransfer(any(), any(), any(), any()) }
         verify(exactly = 0) { completedProducer.publish(any()) }
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+    }
+
+    @Test
+    fun `deve reenviar evento no Kafka quando transacao existir como COMPLETED mas published for false`() {
+        val request = TransferRequest(
+            transferId = "tx-retry-publish",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL"
+        )
+
+        val existingTx = Transaction(
+            transferId = "tx-retry-publish",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now(),
+            published = false
+        )
+
+        every { transactionRepository.findById("tx-retry-publish") } returns existingTx
+
+        processorService.processTransfer(request)
+
+        // NÃO deve debitar/creditar novamente
+        verify(exactly = 0) { accountRepository.executeAtomicTransfer(any(), any(), any(), any()) }
+
+        // DEVE reenviar para o Kafka
+        verify(exactly = 1) { completedProducer.publish(match { it.transferId == "tx-retry-publish" }) }
+
+        // DEVE marcar como publicada
+        verify(exactly = 1) { transactionRepository.markAsPublished("tx-retry-publish") }
+
+        // NÃO deve enviar para DLQ
         verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
     }
 
@@ -178,5 +222,41 @@ class TransferProcessorServiceTest {
 
         // Não deve publicar sucesso
         verify(exactly = 0) { completedProducer.publish(any()) }
+    }
+
+    @Test
+    fun `recoverFromTransientError nao deve sobrescrever para FAILED nem enviar para DLQ se transacao ja for COMPLETED`() {
+        val request = TransferRequest(
+            transferId = "tx-recover-completed",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL"
+        )
+
+        val existingTx = Transaction(
+            transferId = "tx-recover-completed",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now(),
+            published = false
+        )
+
+        every { transactionRepository.findById("tx-recover-completed") } returns existingTx
+
+        val transientEx = com.bank.transfer.domain.exception.TransientException("Kafka indisponivel")
+        processorService.recoverFromTransientError(transientEx, request)
+
+        // NÃO deve sobrescrever no banco como FAILED
+        verify(exactly = 0) { transactionRepository.save(any()) }
+
+        // NÃO deve enviar para DLQ de falha de negócio
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+
+        // Deve registrar métrica de retry esgotado
+        verify(exactly = 1) { metricsService.recordFailure("kafka_publish_retry_exhausted", 0) }
     }
 }

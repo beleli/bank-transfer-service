@@ -16,7 +16,8 @@ fun Map<String, AttributeValue>.toDomainTransactionRecord(defaultTransferId: Str
         status = TransactionStatus.valueOf(this["status"]?.s() ?: TransactionStatus.FAILED.name),
         rejectionReason = this["rejectionReason"]?.s(),
         createdAt = this["createdAt"]?.s()?.let { Instant.parse(it) } ?: Instant.now(),
-        completedAt = this["completedAt"]?.s()?.let { Instant.parse(it) }
+        completedAt = this["completedAt"]?.s()?.let { Instant.parse(it) },
+        published = this["published"]?.bool() ?: false
     )
 }
 
@@ -28,7 +29,8 @@ fun Transaction.toItem(): Map<String, AttributeValue> {
         "amount" to AttributeValue.builder().n(this.amount.toPlainString()).build(),
         "currency" to AttributeValue.builder().s(this.currency).build(),
         "status" to AttributeValue.builder().s(this.status.name).build(),
-        "createdAt" to AttributeValue.builder().s(this.createdAt.toString()).build()
+        "createdAt" to AttributeValue.builder().s(this.createdAt.toString()).build(),
+        "published" to AttributeValue.builder().bool(this.published).build()
     )
 
     this.rejectionReason?.let {

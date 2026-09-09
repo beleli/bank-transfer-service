@@ -44,6 +44,24 @@ class TransferProcessorService(
             // 1. Verificação de Idempotência prévia
             val existingTx = transactionRepository.findById(request.transferId)
             if (existingTx != null) {
+                if (existingTx.status == TransactionStatus.COMPLETED && !existingTx.published) {
+                    logger.info("Transferência transferId=${request.transferId} já concluída no banco, mas com publicação pendente no Kafka. Reenviando evento...")
+                    completedProducer.publish(
+                        TransferCompletedEvent(
+                            transferId = existingTx.transferId,
+                            sourceAccountId = existingTx.sourceAccountId,
+                            destinationAccountId = existingTx.destinationAccountId,
+                            amount = existingTx.amount,
+                            currency = existingTx.currency,
+                            completedAt = existingTx.completedAt ?: Instant.now()
+                        )
+                    )
+                    transactionRepository.markAsPublished(existingTx.transferId)
+                    val duration = System.currentTimeMillis() - startTime
+                    metricsService.recordSuccess(duration)
+                    logger.info("Evento de conclusão reenviado com sucesso para transferId=${existingTx.transferId}")
+                    return
+                }
                 logger.warn("Transferência transferId=${request.transferId} já processada anteriormente com status=${existingTx.status}. Ignorando duplicata (idempotência).")
                 return
             }
@@ -64,7 +82,8 @@ class TransferProcessorService(
                 currency = request.currency,
                 status = TransactionStatus.COMPLETED,
                 createdAt = request.requestedAt,
-                completedAt = Instant.now()
+                completedAt = Instant.now(),
+                published = false
             )
 
             accountRepository.executeAtomicTransfer(
@@ -85,6 +104,7 @@ class TransferProcessorService(
                     completedAt = completedRecord.completedAt ?: Instant.now()
                 )
             )
+            transactionRepository.markAsPublished(request.transferId)
 
             val duration = System.currentTimeMillis() - startTime
             metricsService.recordSuccess(duration)
@@ -149,6 +169,14 @@ class TransferProcessorService(
      */
     @Recover
     fun recoverFromTransientError(exception: TransientException, request: TransferRequest) {
+        val existingTx = transactionRepository.findById(request.transferId)
+        if (existingTx?.status == TransactionStatus.COMPLETED) {
+            val reason = "Falha ao publicar no Kafka após retries para transferência já COMPLETED: ${exception.message}"
+            logger.error("A transferência transferId=${request.transferId} já foi executada, porém a publicação no Kafka falhou após esgotamento de retries. Mantendo COMPLETED com published=false para reconciliação: $reason", exception)
+            metricsService.recordFailure("kafka_publish_retry_exhausted", 0)
+            return
+        }
+
         val reason = "Esgotado limite de retries para falha transiente: ${exception.message}"
         logger.error("Falha irrecuperável por erro transiente após retries para transferId=${request.transferId}: $reason", exception)
 

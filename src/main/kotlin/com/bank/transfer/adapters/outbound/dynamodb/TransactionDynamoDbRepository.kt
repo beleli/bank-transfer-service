@@ -77,6 +77,33 @@ class TransactionDynamoDbRepository(
         }
     }
 
+    override fun markAsPublished(transferId: String) {
+        try {
+            val key = mapOf("transferId" to AttributeValue.builder().s(transferId).build())
+            val request = UpdateItemRequest.builder()
+                .tableName(awsProperties.transactionsTableName)
+                .key(key)
+                .updateExpression("SET published = :published, publishedAt = :publishedAt")
+                .expressionAttributeValues(
+                    mapOf(
+                        ":published" to AttributeValue.builder().bool(true).build(),
+                        ":publishedAt" to AttributeValue.builder().s(java.time.Instant.now().toString()).build()
+                    )
+                )
+                .build()
+
+            dynamoDbClient.updateItem(request)
+            logger.info("Transação transferId=$transferId marcada como publicada no Kafka")
+        } catch (e: SdkClientException) {
+            throw TransientException("DynamoDB client error marking transaction $transferId as published: ${e.message}", e)
+        } catch (e: DynamoDbException) {
+            if (isTransientError(e)) {
+                throw TransientException("DynamoDB transient error marking transaction $transferId as published: ${e.message}", e)
+            }
+            throw e
+        }
+    }
+
     private fun isTransientError(e: DynamoDbException): Boolean {
         val statusCode = e.statusCode()
         return statusCode == 429 || statusCode >= 500 ||

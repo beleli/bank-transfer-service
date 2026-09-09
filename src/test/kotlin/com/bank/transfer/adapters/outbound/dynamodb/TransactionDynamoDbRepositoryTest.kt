@@ -240,5 +240,34 @@ class TransactionDynamoDbRepositoryTest {
             repository.save(tx)
         }
     }
+
+    @Test
+    fun `markAsPublished deve executar updateItem com published true`() {
+        val transferId = "tx-published-123"
+        val response = UpdateItemResponse.builder().build()
+        every { dynamoDbClient.updateItem(any<UpdateItemRequest>()) } returns response
+
+        repository.markAsPublished(transferId)
+
+        verify(exactly = 1) {
+            dynamoDbClient.updateItem(match<UpdateItemRequest> {
+                it.tableName() == "transactions" &&
+                        it.key()["transferId"]?.s() == transferId &&
+                        it.updateExpression().contains("published = :published") &&
+                        it.expressionAttributeValues()[":published"]?.bool() == true
+            })
+        }
+    }
+
+    @Test
+    fun `markAsPublished deve lancar TransientException quando DynamoDbClient falhar com erro transiente`() {
+        val transferId = "tx-published-err"
+        val dynamoEx = DynamoDbException.builder().statusCode(500).message("Internal error").build()
+        every { dynamoDbClient.updateItem(any<UpdateItemRequest>()) } throws dynamoEx
+
+        assertThrows<TransientException> {
+            repository.markAsPublished(transferId)
+        }
+    }
 }
 

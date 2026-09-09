@@ -59,6 +59,7 @@ class DynamoDbMapperTest {
         assertEquals("75.00", item["amount"]?.n())
         assertEquals("BRL", item["currency"]?.s())
         assertEquals("COMPLETED", item["status"]?.s())
+        assertEquals(false, item["published"]?.bool())
         assertNotNull(item["createdAt"]?.s())
         assertNotNull(item["completedAt"]?.s())
 
@@ -69,5 +70,6 @@ class DynamoDbMapperTest {
         assertEquals(record.amount, domainRecord.amount)
         assertEquals(record.currency, domainRecord.currency)
         assertEquals(record.status, domainRecord.status)
+        assertEquals(record.published, domainRecord.published)
     }
 }
