@@ -84,4 +84,38 @@ class TransferRequestMapperTest {
         assertEquals(BigDecimal("100.00"), domain.amount)
         org.junit.jupiter.api.Assertions.assertNotNull(domain.requestedAt)
     }
+
+    @Test
+    fun `deve mapear TransferRequestEvent com valor de 1 casa decimal normalizando para escala 2 sem arredondar`() {
+        val event = com.bank.transfer.adapters.inbound.kafka.avro.TransferRequestEvent.newBuilder()
+            .setTransferId("tx-avro-1dec")
+            .setSourceAccountId("acc-src-1")
+            .setDestinationAccountId("acc-dst-2")
+            .setAmount(150.5)
+            .setCurrency("BRL")
+            .setRequestedAt("2025-01-15T10:30:00Z")
+            .build()
+
+        val domain = event.toDomain()
+
+        assertEquals(BigDecimal("150.50"), domain.amount)
+        assertEquals(2, domain.amount.scale())
+    }
+
+    @Test
+    fun `deve mapear TransferRequestEvent com valor de mais de 2 casas decimais preservando o valor exato sem arredondamento silencioso`() {
+        val event = com.bank.transfer.adapters.inbound.kafka.avro.TransferRequestEvent.newBuilder()
+            .setTransferId("tx-avro-3dec")
+            .setSourceAccountId("acc-src-1")
+            .setDestinationAccountId("acc-dst-2")
+            .setAmount(150.755)
+            .setCurrency("BRL")
+            .setRequestedAt("2025-01-15T10:30:00Z")
+            .build()
+
+        val domain = event.toDomain()
+
+        // Não deve arredondar silenciosamente para 150.76! Deve manter 150.755
+        assertEquals(BigDecimal("150.755"), domain.amount)
+    }
 }

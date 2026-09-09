@@ -37,11 +37,18 @@ fun TransferRequestEvent.toDomain(): TransferRequest {
         Instant.now()
     }
 
+    val rawAmount = BigDecimal.valueOf(this.amount)
+    val parsedAmount = try {
+        rawAmount.setScale(2, RoundingMode.UNNECESSARY)
+    } catch (_: ArithmeticException) {
+        rawAmount
+    }
+
     return TransferRequest(
         transferId = this.transferId,
         sourceAccountId = this.sourceAccountId,
         destinationAccountId = this.destinationAccountId,
-        amount = BigDecimal.valueOf(this.amount).setScale(2, RoundingMode.HALF_UP),
+        amount = parsedAmount,
         currency = this.currency,
         requestedAt = parsedInstant
     )

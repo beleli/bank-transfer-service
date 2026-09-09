@@ -153,4 +153,20 @@ class TransferValidationServiceTest {
             validationService.validate(request, validSourceAccount, inactiveDest)
         }
     }
+
+    @Test
+    fun `deve lancar erro de negocio quando valor da transferencia tiver mais de duas casas decimais`() {
+        val request = TransferRequest(
+            transferId = "tx-scale-invalid",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("150.755"),
+            currency = "BRL"
+        )
+
+        val ex = assertThrows<BusinessException.InvalidAmountException> {
+            validationService.validate(request, validSourceAccount, validDestinationAccount)
+        }
+        org.junit.jupiter.api.Assertions.assertTrue(ex.message!!.contains("2 decimal places"))
+    }
 }
