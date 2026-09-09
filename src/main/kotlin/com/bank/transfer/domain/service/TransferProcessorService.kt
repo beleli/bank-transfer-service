@@ -24,7 +24,15 @@ class TransferProcessorService(
     private val dlqProducer: TransferDlqProducerPort,
     private val metricsService: MetricsPort
 ) : ProcessTransferUseCase {
+
     private val logger = LoggerFactory.getLogger(this::class.java)
+
+    companion object {
+        private const val DEFAULT_REJECTION_REASON = "Regra de negócio violada"
+        private const val METRIC_KAFKA_RETRY_EXHAUSTED = "kafka_publish_retry_exhausted"
+        private const val METRIC_DLQ_RETRY_EXHAUSTED = "dlq_publish_retry_exhausted"
+        private const val METRIC_TRANSIENT_RETRY_EXHAUSTED = "transient_retry_exhausted"
+    }
 
     /**
      * Processa a transferência bancária com retry exponencial para erros transientes
@@ -44,43 +52,7 @@ class TransferProcessorService(
             // 1. Verificação de Idempotência prévia
             val existingTx = transactionRepository.findById(request.transferId)
             if (existingTx != null) {
-                if (existingTx.status == TransactionStatus.COMPLETED && !existingTx.published) {
-                    logger.info("Transferência transferId=${request.transferId} já concluída no banco, mas com publicação pendente no Kafka. Reenviando evento...")
-                    completedProducer.publish(
-                        TransferCompletedEvent(
-                            transferId = existingTx.transferId,
-                            sourceAccountId = existingTx.sourceAccountId,
-                            destinationAccountId = existingTx.destinationAccountId,
-                            amount = existingTx.amount,
-                            currency = existingTx.currency,
-                            completedAt = existingTx.completedAt ?: Instant.now()
-                        )
-                    )
-                    transactionRepository.markAsPublished(existingTx.transferId)
-                    val duration = System.currentTimeMillis() - startTime
-                    metricsService.recordSuccess(duration)
-                    logger.info("Evento de conclusão reenviado com sucesso para transferId=${existingTx.transferId}")
-                    return
-                }
-                if (existingTx.status == TransactionStatus.FAILED && !existingTx.published) {
-                    logger.info("Transferência transferId=${request.transferId} rejeitada anteriormente, mas com envio pendente para SQS DLQ. Reenviando...")
-                    dlqProducer.sendToDlq(
-                        TransferFailedEvent(
-                            transferId = existingTx.transferId,
-                            sourceAccountId = existingTx.sourceAccountId,
-                            destinationAccountId = existingTx.destinationAccountId,
-                            amount = existingTx.amount,
-                            currency = existingTx.currency,
-                            reason = existingTx.rejectionReason ?: "Regra de negócio violada"
-                        )
-                    )
-                    transactionRepository.markAsPublished(existingTx.transferId)
-                    val duration = System.currentTimeMillis() - startTime
-                    metricsService.recordFailure(existingTx.rejectionReason ?: "Regra de negócio violada", duration)
-                    logger.info("Evento de falha reenviado com sucesso para SQS DLQ transferId=${existingTx.transferId}")
-                    return
-                }
-                logger.warn("Transferência transferId=${request.transferId} já processada anteriormente com status=${existingTx.status}. Ignorando duplicata (idempotência).")
+                handleExistingTransaction(existingTx, startTime)
                 return
             }
 
@@ -92,18 +64,7 @@ class TransferProcessorService(
             validationService.validate(request, sourceAccount, destinationAccount)
 
             // 4. Execução Atômica e Idempotente no repositório de contas
-            val completedRecord = Transaction(
-                transferId = request.transferId,
-                sourceAccountId = request.sourceAccountId,
-                destinationAccountId = request.destinationAccountId,
-                amount = request.amount,
-                currency = request.currency,
-                status = TransactionStatus.COMPLETED,
-                createdAt = request.requestedAt,
-                completedAt = Instant.now(),
-                published = false
-            )
-
+            val completedRecord = request.toCompletedTransaction()
             accountRepository.executeAtomicTransfer(
                 sourceAccountId = request.sourceAccountId,
                 destinationAccountId = request.destinationAccountId,
@@ -111,27 +72,43 @@ class TransferProcessorService(
                 transaction = completedRecord
             )
 
-            // 5. Publicação de evento de sucesso
-            completedProducer.publish(
-                TransferCompletedEvent(
-                    transferId = request.transferId,
-                    sourceAccountId = request.sourceAccountId,
-                    destinationAccountId = request.destinationAccountId,
-                    amount = request.amount,
-                    currency = request.currency,
-                    completedAt = completedRecord.completedAt ?: Instant.now()
-                )
-            )
-            transactionRepository.markAsPublished(request.transferId)
+            // 5. Publicação de evento de sucesso e finalização
+            publishCompletedAndMark(completedRecord)
 
-            val duration = System.currentTimeMillis() - startTime
+            val duration = elapsedTime(startTime)
             metricsService.recordSuccess(duration)
             logger.info("Transferência transferId=${request.transferId} processada com sucesso em ${duration}ms")
 
         } catch (e: BusinessException) {
-            val duration = System.currentTimeMillis() - startTime
-            handleBusinessError(request, e, duration)
+            handleBusinessError(request, e, elapsedTime(startTime))
         }
+    }
+
+    /**
+     * Trata transações já existentes no banco de dados, garantindo idempotência e reprocessamento
+     * de publicações que falharam anteriormente (padrão Transactional Outbox).
+     */
+    private fun handleExistingTransaction(existingTx: Transaction, startTime: Long) {
+        if (existingTx.status == TransactionStatus.COMPLETED && !existingTx.published) {
+            logger.info("Transferência transferId=${existingTx.transferId} já concluída no banco, mas com publicação pendente no Kafka. Reenviando evento...")
+            publishCompletedAndMark(existingTx)
+            val duration = elapsedTime(startTime)
+            metricsService.recordSuccess(duration)
+            logger.info("Evento de conclusão reenviado com sucesso para transferId=${existingTx.transferId}")
+            return
+        }
+
+        if (existingTx.status == TransactionStatus.FAILED && !existingTx.published) {
+            logger.info("Transferência transferId=${existingTx.transferId} rejeitada anteriormente, mas com envio pendente para SQS DLQ. Reenviando...")
+            val reason = existingTx.rejectionReason ?: DEFAULT_REJECTION_REASON
+            publishFailedAndMark(existingTx.toFailedEvent(reason))
+            val duration = elapsedTime(startTime)
+            metricsService.recordFailure(reason, duration)
+            logger.info("Evento de falha reenviado com sucesso para SQS DLQ transferId=${existingTx.transferId}")
+            return
+        }
+
+        logger.warn("Transferência transferId=${existingTx.transferId} já processada anteriormente com status=${existingTx.status}. Ignorando duplicata (idempotência).")
     }
 
     /**
@@ -147,42 +124,16 @@ class TransferProcessorService(
             return
         }
 
-        val reason = exception.message ?: "Regra de negócio violada"
+        val reason = exception.message ?: DEFAULT_REJECTION_REASON
         logger.warn("Transferência transferId=${request.transferId} rejeitada por regra de negócio: $reason")
 
-        val failedRecord = Transaction(
-            transferId = request.transferId,
-            sourceAccountId = request.sourceAccountId,
-            destinationAccountId = request.destinationAccountId,
-            amount = request.amount,
-            currency = request.currency,
-            status = TransactionStatus.FAILED,
-            rejectionReason = reason,
-            createdAt = request.requestedAt,
-            completedAt = Instant.now(),
-            published = false
-        )
-        try {
-            transactionRepository.save(failedRecord)
-        } catch (_: BusinessException.DuplicateTransferException) {
-            logger.warn("Transferência transferId=${request.transferId} já registrada no DynamoDB por requisição concorrente. Ignorando envio duplicado para DLQ.")
+        val failedRecord = request.toFailedTransaction(reason)
+        val persisted = persistFailedTransactionSafely(failedRecord, "por requisição concorrente")
+        if (!persisted) {
             return
-        } catch (ex: Exception) {
-            logger.error("Erro ao persistir status FAILED para transferId=${request.transferId}: ${ex.message}", ex)
         }
 
-        dlqProducer.sendToDlq(
-            TransferFailedEvent(
-                transferId = request.transferId,
-                sourceAccountId = request.sourceAccountId,
-                destinationAccountId = request.destinationAccountId,
-                amount = request.amount,
-                currency = request.currency,
-                reason = reason
-            )
-        )
-        transactionRepository.markAsPublished(request.transferId)
-
+        publishFailedAndMark(failedRecord.toFailedEvent(reason))
         metricsService.recordFailure(reason, duration)
     }
 
@@ -195,50 +146,98 @@ class TransferProcessorService(
         if (existingTx?.status == TransactionStatus.COMPLETED) {
             val reason = "Falha ao publicar no Kafka após retries para transferência já COMPLETED: ${exception.message}"
             logger.error("A transferência transferId=${request.transferId} já foi executada, porém a publicação no Kafka falhou após esgotamento de retries. Mantendo COMPLETED com published=false para reconciliação: $reason", exception)
-            metricsService.recordFailure("kafka_publish_retry_exhausted", 0)
+            metricsService.recordFailure(METRIC_KAFKA_RETRY_EXHAUSTED, 0)
             return
         }
         if (existingTx?.status == TransactionStatus.FAILED) {
             val reason = "Falha ao enviar para SQS DLQ após retries para transferência já FAILED: ${exception.message}"
             logger.error("A transferência transferId=${request.transferId} já foi registrada como FAILED, porém o envio para SQS DLQ falhou após esgotamento de retries. Mantendo FAILED com published=false para reconciliação: $reason", exception)
-            metricsService.recordFailure("dlq_publish_retry_exhausted", 0)
+            metricsService.recordFailure(METRIC_DLQ_RETRY_EXHAUSTED, 0)
             return
         }
 
         val reason = "Esgotado limite de retries para falha transiente: ${exception.message}"
         logger.error("Falha irrecuperável por erro transiente após retries para transferId=${request.transferId}: $reason", exception)
 
-        val failedRecord = Transaction(
-            transferId = request.transferId,
-            sourceAccountId = request.sourceAccountId,
-            destinationAccountId = request.destinationAccountId,
-            amount = request.amount,
-            currency = request.currency,
-            status = TransactionStatus.FAILED,
-            rejectionReason = reason,
-            createdAt = request.requestedAt,
-            completedAt = Instant.now()
-        )
-        try {
-            transactionRepository.save(failedRecord)
-        } catch (_: BusinessException.DuplicateTransferException) {
-            logger.warn("Transferência transferId=${request.transferId} já registrada no DynamoDB no recover. Ignorando envio para DLQ.")
+        val failedRecord = request.toFailedTransaction(reason)
+        val persisted = persistFailedTransactionSafely(failedRecord, "no recover")
+        if (!persisted) {
             return
-        } catch (ex: Exception) {
-            logger.error("Erro ao persistir status FAILED no recover para transferId=${request.transferId}: ${ex.message}", ex)
         }
 
-        dlqProducer.sendToDlq(
-            TransferFailedEvent(
-                transferId = request.transferId,
-                sourceAccountId = request.sourceAccountId,
-                destinationAccountId = request.destinationAccountId,
-                amount = request.amount,
-                currency = request.currency,
-                reason = reason
-            )
-        )
-
-        metricsService.recordFailure("transient_retry_exhausted", 0)
+        dlqProducer.sendToDlq(failedRecord.toFailedEvent(reason))
+        metricsService.recordFailure(METRIC_TRANSIENT_RETRY_EXHAUSTED, 0)
     }
+
+    /**
+     * Persiste o registro de falha tratando condição de corrida no DynamoDB.
+     * Retorna false se o registro já existir (duplicata concorrente), ou true caso contrário.
+     */
+    private fun persistFailedTransactionSafely(failedRecord: Transaction, logContext: String): Boolean {
+        return try {
+            transactionRepository.save(failedRecord)
+            true
+        } catch (_: BusinessException.DuplicateTransferException) {
+            logger.warn("Transferência transferId=${failedRecord.transferId} já registrada no DynamoDB $logContext. Ignorando envio para DLQ.")
+            false
+        } catch (ex: Exception) {
+            logger.error("Erro ao persistir status FAILED $logContext para transferId=${failedRecord.transferId}: ${ex.message}", ex)
+            true
+        }
+    }
+
+    private fun publishCompletedAndMark(transaction: Transaction) {
+        completedProducer.publish(transaction.toCompletedEvent())
+        transactionRepository.markAsPublished(transaction.transferId)
+    }
+
+    private fun publishFailedAndMark(event: TransferFailedEvent) {
+        dlqProducer.sendToDlq(event)
+        transactionRepository.markAsPublished(event.transferId)
+    }
+
+    private fun elapsedTime(startTime: Long): Long = System.currentTimeMillis() - startTime
+
+    private fun Transaction.toCompletedEvent() = TransferCompletedEvent(
+        transferId = transferId,
+        sourceAccountId = sourceAccountId,
+        destinationAccountId = destinationAccountId,
+        amount = amount,
+        currency = currency,
+        completedAt = completedAt ?: Instant.now()
+    )
+
+    private fun Transaction.toFailedEvent(fallbackReason: String = DEFAULT_REJECTION_REASON) = TransferFailedEvent(
+        transferId = transferId,
+        sourceAccountId = sourceAccountId,
+        destinationAccountId = destinationAccountId,
+        amount = amount,
+        currency = currency,
+        reason = rejectionReason ?: fallbackReason
+    )
+
+    private fun TransferRequest.toCompletedTransaction(completedAt: Instant = Instant.now()) = Transaction(
+        transferId = transferId,
+        sourceAccountId = sourceAccountId,
+        destinationAccountId = destinationAccountId,
+        amount = amount,
+        currency = currency,
+        status = TransactionStatus.COMPLETED,
+        createdAt = requestedAt,
+        completedAt = completedAt,
+        published = false
+    )
+
+    private fun TransferRequest.toFailedTransaction(reason: String, completedAt: Instant = Instant.now()) = Transaction(
+        transferId = transferId,
+        sourceAccountId = sourceAccountId,
+        destinationAccountId = destinationAccountId,
+        amount = amount,
+        currency = currency,
+        status = TransactionStatus.FAILED,
+        rejectionReason = reason,
+        createdAt = requestedAt,
+        completedAt = completedAt,
+        published = false
+    )
 }
