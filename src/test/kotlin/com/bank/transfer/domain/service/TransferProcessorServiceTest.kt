@@ -188,8 +188,123 @@ class TransferProcessorServiceTest {
             })
         }
 
+        // Deve marcar como publicada no repositório
+        verify(exactly = 1) { transactionRepository.markAsPublished(request.transferId) }
+
         // Registra métrica de falha
         verify(exactly = 1) { metricsService.recordFailure(any(), any()) }
+    }
+
+    @Test
+    fun `deve reenviar para SQS DLQ quando transacao existir como FAILED mas published for false`() {
+        val request = TransferRequest(
+            transferId = "tx-failed-unpub",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("100.00"),
+            currency = "BRL"
+        )
+
+        val existingTx = Transaction(
+            transferId = "tx-failed-unpub",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("100.00"),
+            currency = "BRL",
+            status = TransactionStatus.FAILED,
+            createdAt = Instant.now(),
+            rejectionReason = "ACCOUNT_BLOCKED: Conta de origem bloqueada",
+            published = false
+        )
+
+        every { transactionRepository.findById("tx-failed-unpub") } returns existingTx
+
+        processorService.processTransfer(request)
+
+        // Não deve validar nem transferir novamente
+        verify(exactly = 0) { validationService.validate(any(), any(), any()) }
+        verify(exactly = 0) { accountRepository.executeAtomicTransfer(any(), any(), any(), any()) }
+        verify(exactly = 0) { transactionRepository.save(any()) }
+
+        // Deve reenviar para SQS DLQ
+        verify(exactly = 1) {
+            dlqProducer.sendToDlq(match {
+                it.transferId == "tx-failed-unpub" && it.reason.contains("ACCOUNT_BLOCKED")
+            })
+        }
+
+        // Deve marcar como publicada
+        verify(exactly = 1) { transactionRepository.markAsPublished("tx-failed-unpub") }
+    }
+
+    @Test
+    fun `deve ignorar quando transacao existir como FAILED e ja estiver publicada`() {
+        val request = TransferRequest(
+            transferId = "tx-failed-pub",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("100.00"),
+            currency = "BRL"
+        )
+
+        val existingTx = Transaction(
+            transferId = "tx-failed-pub",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("100.00"),
+            currency = "BRL",
+            status = TransactionStatus.FAILED,
+            createdAt = Instant.now(),
+            rejectionReason = "ACCOUNT_BLOCKED: Conta de origem bloqueada",
+            published = true
+        )
+
+        every { transactionRepository.findById("tx-failed-pub") } returns existingTx
+
+        processorService.processTransfer(request)
+
+        verify(exactly = 0) { validationService.validate(any(), any(), any()) }
+        verify(exactly = 0) { accountRepository.executeAtomicTransfer(any(), any(), any(), any()) }
+        verify(exactly = 0) { transactionRepository.save(any()) }
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+        verify(exactly = 0) { transactionRepository.markAsPublished(any()) }
+    }
+
+    @Test
+    fun `recoverFromTransientError nao deve sobrescrever nem reenviar para DLQ se transacao ja for FAILED`() {
+        val request = TransferRequest(
+            transferId = "tx-recover-failed",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL"
+        )
+
+        val existingTx = Transaction(
+            transferId = "tx-recover-failed",
+            sourceAccountId = "acc-123",
+            destinationAccountId = "acc-456",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.FAILED,
+            createdAt = Instant.now(),
+            rejectionReason = "Saldo insuficiente",
+            published = false
+        )
+
+        every { transactionRepository.findById("tx-recover-failed") } returns existingTx
+
+        val transientEx = com.bank.transfer.domain.exception.TransientException("SQS indisponivel")
+        processorService.recoverFromTransientError(transientEx, request)
+
+        // NÃO deve salvar novamente
+        verify(exactly = 0) { transactionRepository.save(any()) }
+
+        // NÃO deve enviar para DLQ
+        verify(exactly = 0) { dlqProducer.sendToDlq(any()) }
+
+        // Deve registrar métrica de retry esgotado
+        verify(exactly = 1) { metricsService.recordFailure("dlq_publish_retry_exhausted", 0) }
     }
 
     @Test

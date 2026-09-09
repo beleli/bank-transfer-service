@@ -2,6 +2,7 @@ package com.bank.transfer.adapters.outbound.sqs
 
 import com.bank.transfer.adapters.config.AwsProperties
 import com.bank.transfer.domain.event.TransferFailedEvent
+import com.bank.transfer.domain.exception.TransientException
 import com.bank.transfer.domain.port.TransferDlqProducerPort
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
@@ -34,6 +35,7 @@ class TransferDlqSqsProducer(
             logger.info("Transferência rejeitada enviada para SQS DLQ: queue=${awsProperties.sqsDlqQueueName} transferId=${event.transferId} reason=${event.reason}")
         } catch (e: Exception) {
             logger.error("Falha crítica ao enviar mensagem para SQS DLQ transferId=${event.transferId}: ${e.message}", e)
+            throw TransientException("Falha ao enviar mensagem para SQS DLQ transferId=${event.transferId}: ${e.message}", e)
         }
     }
 

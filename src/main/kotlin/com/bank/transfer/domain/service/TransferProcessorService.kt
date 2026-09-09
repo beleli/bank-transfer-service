@@ -62,6 +62,24 @@ class TransferProcessorService(
                     logger.info("Evento de conclusão reenviado com sucesso para transferId=${existingTx.transferId}")
                     return
                 }
+                if (existingTx.status == TransactionStatus.FAILED && !existingTx.published) {
+                    logger.info("Transferência transferId=${request.transferId} rejeitada anteriormente, mas com envio pendente para SQS DLQ. Reenviando...")
+                    dlqProducer.sendToDlq(
+                        TransferFailedEvent(
+                            transferId = existingTx.transferId,
+                            sourceAccountId = existingTx.sourceAccountId,
+                            destinationAccountId = existingTx.destinationAccountId,
+                            amount = existingTx.amount,
+                            currency = existingTx.currency,
+                            reason = existingTx.rejectionReason ?: "Regra de negócio violada"
+                        )
+                    )
+                    transactionRepository.markAsPublished(existingTx.transferId)
+                    val duration = System.currentTimeMillis() - startTime
+                    metricsService.recordFailure(existingTx.rejectionReason ?: "Regra de negócio violada", duration)
+                    logger.info("Evento de falha reenviado com sucesso para SQS DLQ transferId=${existingTx.transferId}")
+                    return
+                }
                 logger.warn("Transferência transferId=${request.transferId} já processada anteriormente com status=${existingTx.status}. Ignorando duplicata (idempotência).")
                 return
             }
@@ -142,7 +160,8 @@ class TransferProcessorService(
             status = TransactionStatus.FAILED,
             rejectionReason = reason,
             createdAt = request.requestedAt,
-            completedAt = Instant.now()
+            completedAt = Instant.now(),
+            published = false
         )
         try {
             transactionRepository.save(failedRecord)
@@ -160,6 +179,7 @@ class TransferProcessorService(
                 reason = reason
             )
         )
+        transactionRepository.markAsPublished(request.transferId)
 
         metricsService.recordFailure(reason, duration)
     }
@@ -174,6 +194,12 @@ class TransferProcessorService(
             val reason = "Falha ao publicar no Kafka após retries para transferência já COMPLETED: ${exception.message}"
             logger.error("A transferência transferId=${request.transferId} já foi executada, porém a publicação no Kafka falhou após esgotamento de retries. Mantendo COMPLETED com published=false para reconciliação: $reason", exception)
             metricsService.recordFailure("kafka_publish_retry_exhausted", 0)
+            return
+        }
+        if (existingTx?.status == TransactionStatus.FAILED) {
+            val reason = "Falha ao enviar para SQS DLQ após retries para transferência já FAILED: ${exception.message}"
+            logger.error("A transferência transferId=${request.transferId} já foi registrada como FAILED, porém o envio para SQS DLQ falhou após esgotamento de retries. Mantendo FAILED com published=false para reconciliação: $reason", exception)
+            metricsService.recordFailure("dlq_publish_retry_exhausted", 0)
             return
         }
 

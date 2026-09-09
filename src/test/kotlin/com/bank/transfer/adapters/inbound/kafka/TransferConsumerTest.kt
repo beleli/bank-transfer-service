@@ -4,6 +4,8 @@ import com.bank.transfer.adapters.inbound.kafka.avro.TransferRequestEvent
 import com.bank.transfer.domain.port.ProcessTransferUseCase
 import com.bank.transfer.domain.port.TransferDlqProducerPort
 import io.mockk.*
+import com.bank.transfer.domain.exception.TransientException
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -68,6 +70,25 @@ class TransferConsumerTest {
                 it.destinationAccountId == "acc-456" &&
                 it.reason.contains("Processing error on Avro event")
             })
+        }
+    }
+
+    @Test
+    fun `deve propagar excecao quando envio para DLQ falhar para nao comitar offset no Kafka`() {
+        val event = TransferRequestEvent.newBuilder()
+            .setTransferId("550e8400-e29b-41d4-a716-446655440000")
+            .setSourceAccountId("acc-123")
+            .setDestinationAccountId("acc-456")
+            .setAmount(150.75)
+            .setCurrency("BRL")
+            .setRequestedAt("2025-01-15T10:30:00Z")
+            .build()
+
+        every { processTransferUseCase.processTransfer(any()) } throws RuntimeException("Erro inesperado no processamento")
+        every { dlqProducer.sendToDlq(any()) } throws TransientException("SQS indisponivel")
+
+        assertThrows<TransientException> {
+            consumer.handle(event)
         }
     }
 }
