@@ -1,6 +1,7 @@
 package com.bank.transfer.adapters.outbound.dynamodb
 
 import com.bank.transfer.adapters.config.AwsProperties
+import com.bank.transfer.domain.exception.BusinessException
 import com.bank.transfer.domain.exception.TransientException
 import com.bank.transfer.domain.model.Transaction
 import com.bank.transfer.domain.model.TransactionStatus
@@ -113,7 +114,7 @@ class TransactionDynamoDbRepositoryTest {
     }
 
     @Test
-    fun `save deve persistir transacao com status COMPLETED sem condicao restritiva`() {
+    fun `save deve persistir transacao com condicao attribute_not_exists para garantir idempotencia`() {
         val tx = Transaction(
             transferId = "tx-comp",
             sourceAccountId = "acc-1",
@@ -132,13 +133,13 @@ class TransactionDynamoDbRepositoryTest {
             dynamoDbClient.putItem(match<PutItemRequest> {
                 it.tableName() == "transactions" &&
                         it.item()["transferId"]?.s() == "tx-comp" &&
-                        it.conditionExpression() == null
+                        it.conditionExpression() == "attribute_not_exists(transferId)"
             })
         }
     }
 
     @Test
-    fun `save deve persistir transacao com status FAILED com condicao para nao sobrescrever COMPLETED`() {
+    fun `save deve persistir transacao com status FAILED com condicao attribute_not_exists para idempotencia`() {
         val tx = Transaction(
             transferId = "tx-fail",
             sourceAccountId = "acc-1",
@@ -157,17 +158,15 @@ class TransactionDynamoDbRepositoryTest {
             dynamoDbClient.putItem(match<PutItemRequest> {
                 it.tableName() == "transactions" &&
                         it.item()["transferId"]?.s() == "tx-fail" &&
-                        it.conditionExpression() == "attribute_not_exists(transferId) OR #status <> :completed" &&
-                        it.expressionAttributeNames()["#status"] == "status" &&
-                        it.expressionAttributeValues()[":completed"]?.s() == "COMPLETED"
+                        it.conditionExpression() == "attribute_not_exists(transferId)"
             })
         }
     }
 
     @Test
-    fun `save deve ignorar silenciosamente quando ConditionalCheckFailedException ocorrer para status FAILED`() {
+    fun `save deve lancar DuplicateTransferException quando ConditionalCheckFailedException ocorrer`() {
         val tx = Transaction(
-            transferId = "tx-already-completed",
+            transferId = "tx-already-exists",
             sourceAccountId = "acc-1",
             destinationAccountId = "acc-2",
             amount = BigDecimal("100.00"),
@@ -179,8 +178,7 @@ class TransactionDynamoDbRepositoryTest {
         val condEx = ConditionalCheckFailedException.builder().message("Condition check failed").build()
         every { dynamoDbClient.putItem(any<PutItemRequest>()) } throws condEx
 
-        // Não deve propagar exceção
-        assertDoesNotThrow {
+        assertThrows<BusinessException.DuplicateTransferException> {
             repository.save(tx)
         }
     }
@@ -238,6 +236,76 @@ class TransactionDynamoDbRepositoryTest {
 
         assertThrows<ResourceNotFoundException> {
             repository.save(tx)
+        }
+    }
+
+    @Test
+    fun `markAsPublished deve executar updateItem com published true`() {
+        val transferId = "tx-published-123"
+        val response = UpdateItemResponse.builder().build()
+        every { dynamoDbClient.updateItem(any<UpdateItemRequest>()) } returns response
+
+        repository.markAsPublished(transferId)
+
+        verify(exactly = 1) {
+            dynamoDbClient.updateItem(match<UpdateItemRequest> {
+                it.tableName() == "transactions" &&
+                        it.key()["transferId"]?.s() == transferId &&
+                        it.updateExpression().contains("published = :published") &&
+                        it.expressionAttributeValues()[":published"]?.bool() == true
+            })
+        }
+    }
+
+    @Test
+    fun `markAsPublished deve lancar TransientException quando DynamoDbClient falhar com erro transiente`() {
+        val transferId = "tx-published-err"
+        val dynamoEx = DynamoDbException.builder().statusCode(500).message("Internal error").build()
+        every { dynamoDbClient.updateItem(any<UpdateItemRequest>()) } throws dynamoEx
+
+        assertThrows<TransientException> {
+            repository.markAsPublished(transferId)
+        }
+    }
+
+    @Test
+    fun `findUnpublished deve executar scan com filtro de published false e status COMPLETED`() {
+        val item = mapOf(
+            "transferId" to AttributeValue.builder().s("tx-unpub").build(),
+            "sourceAccountId" to AttributeValue.builder().s("acc-1").build(),
+            "destinationAccountId" to AttributeValue.builder().s("acc-2").build(),
+            "amount" to AttributeValue.builder().n("100.00").build(),
+            "currency" to AttributeValue.builder().s("BRL").build(),
+            "status" to AttributeValue.builder().s("COMPLETED").build(),
+            "createdAt" to AttributeValue.builder().s(Instant.now().toString()).build(),
+            "published" to AttributeValue.builder().bool(false).build()
+        )
+        val scanResponse = ScanResponse.builder().items(listOf(item)).build()
+        every { dynamoDbClient.scan(any<ScanRequest>()) } returns scanResponse
+
+        val result = repository.findUnpublished(limit = 10)
+
+        assertEquals(1, result.size)
+        assertEquals("tx-unpub", result[0].transferId)
+        assertFalse(result[0].published)
+
+        verify(exactly = 1) {
+            dynamoDbClient.scan(match<ScanRequest> {
+                it.tableName() == "transactions" &&
+                it.limit() == 10 &&
+                it.filterExpression().contains("published = :published") &&
+                it.expressionAttributeValues()[":published"]?.bool() == false
+            })
+        }
+    }
+
+    @Test
+    fun `findUnpublished deve lancar TransientException quando DynamoDbClient falhar com erro transiente`() {
+        val dynamoEx = DynamoDbException.builder().statusCode(503).message("Unavailable").build()
+        every { dynamoDbClient.scan(any<ScanRequest>()) } throws dynamoEx
+
+        assertThrows<TransientException> {
+            repository.findUnpublished(limit = 10)
         }
     }
 }

@@ -5,4 +5,6 @@ import com.bank.transfer.domain.model.Transaction
 interface TransactionRepositoryPort {
     fun findById(transferId: String): Transaction?
     fun save(record: Transaction)
+    fun markAsPublished(transferId: String)
+    fun findUnpublished(limit: Int = 50): List<Transaction>
 }

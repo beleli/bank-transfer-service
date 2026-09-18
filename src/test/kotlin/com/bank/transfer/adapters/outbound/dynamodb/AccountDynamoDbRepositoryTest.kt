@@ -360,5 +360,105 @@ class AccountDynamoDbRepositoryTest {
             repository.executeAtomicTransfer("acc-1", "acc-2", BigDecimal("50.00"), tx)
         }
     }
+
+    @Test
+    fun `executeAtomicTransfer deve lancar TransientException quando motivo for TransactionConflict`() {
+        val tx = Transaction(
+            transferId = "tx-conflict",
+            sourceAccountId = "acc-1",
+            destinationAccountId = "acc-2",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now()
+        )
+        val reasons = listOf(
+            CancellationReason.builder().code("TransactionConflict").message("Item modified concurrently").build(),
+            CancellationReason.builder().code("None").build(),
+            CancellationReason.builder().code("None").build()
+        )
+        val cancelEx = TransactionCanceledException.builder()
+            .cancellationReasons(reasons)
+            .message("Transaction cancelled")
+            .build()
+
+        every { dynamoDbClient.transactWriteItems(any<TransactWriteItemsRequest>()) } throws cancelEx
+
+        assertThrows<TransientException> {
+            repository.executeAtomicTransfer("acc-1", "acc-2", BigDecimal("50.00"), tx)
+        }
+    }
+
+    @Test
+    fun `executeAtomicTransfer deve lancar TransientException quando motivo for ThrottlingError`() {
+        val tx = Transaction(
+            transferId = "tx-throttling",
+            sourceAccountId = "acc-1",
+            destinationAccountId = "acc-2",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now()
+        )
+        val reasons = listOf(
+            CancellationReason.builder().code("ThrottlingError").message("Rate exceeded").build()
+        )
+        val cancelEx = TransactionCanceledException.builder()
+            .cancellationReasons(reasons)
+            .message("Transaction cancelled")
+            .build()
+
+        every { dynamoDbClient.transactWriteItems(any<TransactWriteItemsRequest>()) } throws cancelEx
+
+        assertThrows<TransientException> {
+            repository.executeAtomicTransfer("acc-1", "acc-2", BigDecimal("50.00"), tx)
+        }
+    }
+
+    @Test
+    fun `executeAtomicTransfer deve lancar TransientException para cancelamento transacional com motivo desconhecido`() {
+        val tx = Transaction(
+            transferId = "tx-unknown-cancel",
+            sourceAccountId = "acc-1",
+            destinationAccountId = "acc-2",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now()
+        )
+        val cancelEx = TransactionCanceledException.builder()
+            .cancellationReasons(emptyList())
+            .message("Transaction cancelled without reasons")
+            .build()
+
+        every { dynamoDbClient.transactWriteItems(any<TransactWriteItemsRequest>()) } throws cancelEx
+
+        assertThrows<TransientException> {
+            repository.executeAtomicTransfer("acc-1", "acc-2", BigDecimal("50.00"), tx)
+        }
+    }
+
+    @Test
+    fun `executeAtomicTransfer deve lancar TransientException quando TransactionCanceledException tiver status HTTP 429`() {
+        val tx = Transaction(
+            transferId = "tx-status-429",
+            sourceAccountId = "acc-1",
+            destinationAccountId = "acc-2",
+            amount = BigDecimal("50.00"),
+            currency = "BRL",
+            status = TransactionStatus.COMPLETED,
+            createdAt = Instant.now()
+        )
+        val cancelEx = TransactionCanceledException.builder()
+            .statusCode(429)
+            .message("Too Many Requests")
+            .build()
+
+        every { dynamoDbClient.transactWriteItems(any<TransactWriteItemsRequest>()) } throws cancelEx
+
+        assertThrows<TransientException> {
+            repository.executeAtomicTransfer("acc-1", "acc-2", BigDecimal("50.00"), tx)
+        }
+    }
 }
 

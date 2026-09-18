@@ -2,6 +2,7 @@ package com.bank.transfer.adapters.outbound.sqs
 
 import com.bank.transfer.adapters.config.AwsProperties
 import com.bank.transfer.domain.event.TransferFailedEvent
+import com.bank.transfer.domain.exception.TransientException
 import com.bank.transfer.domain.port.TransferDlqProducerPort
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
@@ -25,15 +26,23 @@ class TransferDlqSqsProducer(
             val queueUrl = getQueueUrl(awsProperties.sqsDlqQueueName)
             val messageBody = objectMapper.writeValueAsString(event)
 
+            val messageAttributes = mapOf(
+                "transferId" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.transferId).build(),
+                "reason" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.reason.take(256)).build(),
+                "timestamp" to software.amazon.awssdk.services.sqs.model.MessageAttributeValue.builder().dataType("String").stringValue(event.failedAt.toString()).build()
+            )
+
             val sendMsgRequest = SendMessageRequest.builder()
                 .queueUrl(queueUrl)
                 .messageBody(messageBody)
+                .messageAttributes(messageAttributes)
                 .build()
 
             sqsClient.sendMessage(sendMsgRequest)
             logger.info("Transferência rejeitada enviada para SQS DLQ: queue=${awsProperties.sqsDlqQueueName} transferId=${event.transferId} reason=${event.reason}")
         } catch (e: Exception) {
             logger.error("Falha crítica ao enviar mensagem para SQS DLQ transferId=${event.transferId}: ${e.message}", e)
+            throw TransientException("Falha ao enviar mensagem para SQS DLQ transferId=${event.transferId}: ${e.message}", e)
         }
     }
 

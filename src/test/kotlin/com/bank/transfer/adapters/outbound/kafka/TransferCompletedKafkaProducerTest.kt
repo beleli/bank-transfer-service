@@ -60,7 +60,7 @@ class TransferCompletedKafkaProducerTest {
     }
 
     @Test
-    fun `publish deve tratar falha assincrona do Kafka sem propagar excecao`() {
+    fun `publish deve propagar TransientException quando Kafka falhar`() {
         val event = TransferCompletedEvent(
             transferId = "tx-fail-kafka",
             sourceAccountId = "acc-1",
@@ -76,7 +76,7 @@ class TransferCompletedKafkaProducerTest {
 
         every { kafkaTemplate.send(any(), any(), any()) } returns failedFuture
 
-        assertDoesNotThrow {
+        org.junit.jupiter.api.assertThrows<com.bank.transfer.domain.exception.TransientException> {
             producer.publish(event)
         }
 

@@ -104,7 +104,7 @@ class TransferDlqSqsProducerTest {
     }
 
     @Test
-    fun `sendToDlq deve capturar e registrar erro silenciosamente se envio ao SQS falhar`() {
+    fun `sendToDlq deve propagar TransientException quando envio ao SQS falhar`() {
         val event = TransferFailedEvent(
             transferId = "tx-err",
             sourceAccountId = "acc-1",
@@ -119,7 +119,7 @@ class TransferDlqSqsProducerTest {
             sqsClient.getQueueUrl(any<GetQueueUrlRequest>())
         } throws RuntimeException("SQS indisponivel")
 
-        assertDoesNotThrow {
+        org.junit.jupiter.api.assertThrows<com.bank.transfer.domain.exception.TransientException> {
             producer.sendToDlq(event)
         }
     }

@@ -18,9 +18,12 @@ class TransferValidationService {
             throw BusinessException.InvalidCurrencyException(request.currency)
         }
 
-        // 2. Validar valor positivo
+        // 2. Validar valor positivo e precisão monetária (máximo 2 casas decimais)
         if (request.amount <= BigDecimal.ZERO) {
             throw BusinessException.InvalidAmountException("Transfer amount must be positive, received: ${request.amount}")
+        }
+        if (request.amount.stripTrailingZeros().scale() > 2) {
+            throw BusinessException.InvalidAmountException("Transfer amount cannot have more than 2 decimal places: ${request.amount}")
         }
 
         // 3. Validar contas distintas

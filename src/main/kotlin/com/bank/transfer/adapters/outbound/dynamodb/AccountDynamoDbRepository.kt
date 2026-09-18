@@ -126,6 +126,14 @@ class AccountDynamoDbRepository(
             val reasons = e.cancellationReasons()
             logger.warn("Transação cancelada pelo DynamoDB para transferId=${transaction.transferId}. Razões: $reasons")
 
+            // 1. Identificar erros transitórios nos motivos de cancelamento ou no status HTTP da exceção
+            val transientReasonCodes = setOf("TransactionConflict", "ThrottlingError", "ProvisionedThroughputExceeded")
+            val hasTransientReason = reasons?.any { it.code() in transientReasonCodes } == true
+            if (hasTransientReason || isTransientError(e)) {
+                throw TransientException("Erro transiente no DynamoDB durante TransactWriteItems para transferId=${transaction.transferId}: ${e.message}", e)
+            }
+
+            // 2. Tratar falhas de condição de negócio específicas
             if (reasons != null && reasons.size > 2 && reasons[2].code() == "ConditionalCheckFailed") {
                 throw BusinessException.DuplicateTransferException(transaction.transferId)
             }
@@ -135,7 +143,14 @@ class AccountDynamoDbRepository(
             if (reasons != null && reasons.size > 1 && reasons[1].code() == "ConditionalCheckFailed") {
                 throw BusinessException.InactiveAccountException(destinationAccountId)
             }
-            throw BusinessException.InvalidAmountException("Condições da transação não foram satisfeitas: ${e.message}")
+
+            // 3. Validação de parâmetros rejeitada pelo DynamoDB
+            if (reasons?.any { it.code() == "ValidationError" } == true) {
+                throw BusinessException.InvalidAmountException("Erro de validação na transação do DynamoDB: ${e.message}")
+            }
+
+            // 4. Cancelamentos não reconhecidos: tratar como erro transiente para permitir retry seguro
+            throw TransientException("Cancelamento transacional não reconhecido no DynamoDB para transferId=${transaction.transferId}: ${e.message}", e)
         } catch (e: SdkClientException) {
             throw TransientException("Erro no cliente SDK ao executar TransactWriteItems: ${e.message}", e)
         } catch (e: DynamoDbException) {

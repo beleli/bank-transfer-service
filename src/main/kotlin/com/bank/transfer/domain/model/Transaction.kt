@@ -12,5 +12,6 @@ data class Transaction(
     val status: TransactionStatus,
     val createdAt: Instant,
     val rejectionReason: String? = null,
-    val completedAt: Instant? = null
+    val completedAt: Instant? = null,
+    val published: Boolean = false
 )
